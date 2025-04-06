@@ -26,6 +26,7 @@ or
       - discord
       - email
       - exotel
+      - flashduty
       - gitter
       - googlechat
       - gelf
@@ -34,7 +35,6 @@ or
       - iris
       - jira
       - lark
-      - linenotify
       - matrixhookshot
       - mattermost
       - ms_teams
@@ -54,8 +54,10 @@ or
       - tencent_sms
       - twilio
       - victorops
+      - webex_webhook
       - workwechat
       - zabbix
+      - yzj
 
 Options for each alerter can either defined at the top level of the YAML file, or nested within the alert name, allowing for different settings
 for multiple of the same alerter. For example, consider sending multiple emails, but with different 'To' and 'From' fields:
@@ -317,9 +319,9 @@ Optional:
 
 ``alertmanager_alertname``: ``alertname`` is the only required label. Defaults to using the rule name of the alert.
 
-``alertmanager_labels``: Key:value pairs of arbitrary labels to be attached to every alert. Keys should match the regular expression ``^[a-zA-Z_][a-zA-Z0-9_]*$``.
+``alertmanager_labels``: Key:value pairs of arbitrary labels to be attached to every alert. Keys should match the regular expression ``^[a-zA-Z_][a-zA-Z0-9_]*$``. Jinja2 templating, such as ``{{ field }}``, can be used in the value to reference any field in the matched events. When field names use dot notation or reserved characters, ``_data`` can be used to access these fields. If ``_data`` conflicts with your top level data, use ``jinja_root_name`` to change its name.
 
-``alertmanager_annotations``: Key:value pairs of arbitrary annotations to be attached to every alert. Keys should match the regular expression ``^[a-zA-Z_][a-zA-Z0-9_]*$``.
+``alertmanager_annotations``: Key:value pairs of arbitrary annotations to be attached to every alert. Keys should match the regular expression ``^[a-zA-Z_][a-zA-Z0-9_]*$``. Jinja2 templating, such as ``{{ field }}``, can be used in the value to reference any field in the matched events. When field names use dot notation or reserved characters, ``_data`` can be used to access these fields. If ``_data`` conflicts with your top level data, use ``jinja_root_name`` to change its name.
 
 ``alertmanager_fields``: Key:value pairs of labels and corresponding match fields. When using ``alertmanager_fields`` you can access nested fields and index into arrays the same way as with ``alert_text_args``. Keys should match the regular expression ``^[a-zA-Z_][a-zA-Z0-9_]*$``. This dictionary will be merged with the ``alertmanager_labels``.
 
@@ -362,25 +364,26 @@ Additional explanation:
 
 ElastAlert 2 can send two categories of data to Alertmanager: labels and annotations
 
-Labels are sent as either static values or a single field value lookup. So if you specify the following::
+Labels are sent either as static values or can be formatted using jinja2 templates that reference any field values from the Elastic record that triggered the alert. For example::
 
     alertmanager_labels:
       someStaticLabel: "Verify this issue"
-      anotherStaticLabel: "someone@somewhere.invalid"
+      someTemplatedLabel: "{{ someElasticFieldName }}"
+      someOtherTemplatedLabel: "{{ someElasticFieldName }}:{{ _data["some.elastic.field.name"] }}"
+
+Alternatively you can use the ``alertmanager_fields`` option to define a dictionary of labels and corresponding field names from the Elastic record which will then be merged back into the dictionary defined by ``alertmanager_labels``.
 
     alertmanager_fields:
-      myLabelName: someElasticFieldName
-      anotherLabel: anotherElasticFieldName
+      someLabel: "someElasticFieldName"
+      someOtherLabel: "someOtherElasticFieldName"
 
-The first labels will be static, but the two field will be replaced with the corresponding field values from the Elastic record that triggered the alert, and then merged back into the list of labels sent to Alertmanager.
-
-Annotations are slightly different. You can have many static (hardcoded) annotations and only two annotations that will be formatted according to the `alert_text` and `alert_subject` [documentation](https://elastalert2.readthedocs.io/en/latest/ruletypes.html#alert-subject). 
+Annotations are similar to labels where it can either be a static value or formatted using jinja2 templates. The only difference is that ``alert_text`` and ``alert_subject`` are merged back into the dictionary defined by ``alertmanager_annotations`` and are subjected to [different formatting rules](https://elastalert2.readthedocs.io/en/latest/ruletypes.html#alert-subject).
 
 For example::
 
     alertmanager_annotations:
       someStaticAnnotation: "This is a static annotation value, it never changes"
-      severity: P3
+      someTemplatedAnnotation: "This is a templated annotation value: {{ someElasticFieldName }}"
 
     alertmanager_alert_subject_labelname: myCustomAnnotationName1
     alertmanager_alert_text_labelname: myCustomAnnotationName2
@@ -1414,21 +1417,6 @@ Example usage::
     lark_bot_id: "your lark bot id"
     lark_msgtype: "text"
 
-Line Notify
-~~~~~~~~~~~
-
-Line Notify will send notification to a Line application. The body of the notification is formatted the same as with other alerters.
-
-Required:
-
-``linenotify_access_token``: The access token that you got from https://notify-bot.line.me/my/
-
-Example usage::
-
-    alert:
-      - "linenotify"
-    linenotify_access_token: "Your linenotify access token"
-
 Matrix Hookshot
 ~~~~~~~~~~~~~~~
 
@@ -1671,6 +1659,8 @@ Microsoft Power Automate alerter will send a notification to a predefined Micros
 The alerter requires the following options:
 
 ``ms_power_automate_webhook_url``: The webhook URL provided in Power Automate, `doc Microsoft <https://support.microsoft.com/en-us/office/post-a-workflow-when-a-webhook-request-is-received-in-microsoft-teams-8ae491c7-0394-4861-ba59-055e33f75498>`_. After creating the flow select your Teams channel under "Send each adaptive card". You can use a list of URLs to send to multiple channels.
+
+``ms_power_automate_webhook_url_from_field``: Use a field from the document that triggered the alert as the webhook. If the field cannot be found, the ``ms_power_automate_webhook_url`` value will be used as a default. 
 
 Optional:
 
@@ -2522,6 +2512,30 @@ Example with SMS usage::
     twilio_auth_token: "abcdefghijklmnopqrstuvwxyz012345"
     twilio_account_sid: "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567"
 
+Webex Webhook
+~~~~~~~~~~~~~
+
+Webex Webhook alerter will send notification to a predefined incoming webhook in Webex application. The body of the notification is formatted the same as with other alerters.
+
+Official Webex incoming webhook documentation: https://apphub.webex.com/applications/incoming-webhooks-cisco-systems-38054-23307-75252
+
+Required:
+
+``webex_webhook_id``:  Webex webhook ID.
+``webex_webhook_msgtype``:  Webex webhook message format. Can be ``text`` or ``markdown``. Defaults to ``text``.
+
+Example usage::
+
+    alert_text: "**{0}** - ALERT on host {1}"
+    alert_text_args:
+      - name
+      - hostname
+    alert:
+      - webex_webhook
+    alert_text_type: alert_text_only
+    webex_webhook_id: "your webex incoming webhook id"
+    webex_webhook: "markdown"
+
 WorkWechat
 ~~~~~~~~~~
 
@@ -2578,3 +2592,66 @@ Example usage::
     zbx_key: "sender_load1"
 
 where ``hostname`` is the available elasticsearch field.
+
+YZJ
+~~~~~~~
+
+YZJ will send notification to a YZJ application. The body of the notification is formatted the same as with other alerters.
+
+Required:
+
+``yzj_token``:  The request token.
+
+Optional:
+
+``yzj_webhook_url``:  The webhook URL.
+
+``yzj_type``: Default 0, send text message. https://www.yunzhijia.com/opendocs/docs.html#/server-api/im/index?id=%e7%be%a4%e7%bb%84%e6%9c%ba%e5%99%a8%e4%ba%ba
+
+``yzj_proxy``: By default ElastAlert 2 will not use a network proxy to send notifications to YZJ. Set this option using ``hostname:port`` if you need to use a proxy. only supports https.
+
+``yzj_custom_loc``: The YZJ custom net location, include domain name and port, like: www.xxxx.com:80.
+
+
+Example usage::
+
+    alert:
+    - "yzj"
+    yzj_token: "token"
+
+
+Flashduty
+~~~~~~~~~~~~~
+
+Flashduty alerter will send notification to a Flashduty application. The body of the notification formatted the same as with other alerters.
+
+Required:
+
+``flashduty_integration_key``:  Flashduty integration key.
+``flashduty_title``:  Alert title , no more than 512 characters, will be truncated if exceeded. Default to ``ElastAlert Alert``.
+``flashduty_event_status``:  Alert status. Can be ``Info``, ``Warning``, ``Critical``, ``Ok``. Defaults to ``Info``.
+
+
+Example usage::
+
+    alert_text: "**{0}** - ALERT on host {1}"
+    alert_text_args:
+      - name
+      - hostname
+    alert:
+      - flashduty
+    flashduty_integration_key: "xxx"
+    flashduty_title: "elastalert"
+    flashduty_event_status: "Warning"
+    flashduty_alert_key: "abc"
+    flashduty_description: "log error"
+    flashduty_check: "Too many occurrences of error logs"
+    flashduty_resource: "index_name"
+    flashduty_service: "service_name"
+    flashduty_metric: "The number of error logs is greater than 5"
+    flashduty_group: "sre"
+    flashduty_cluster: "k8s"
+    flashduty_app: "app"
+    flashduty_env: "dev"
+
+ Please refer to the parameter definition: https://docs.flashcat.cloud/en/flashduty/elastalert2-integration-guide
